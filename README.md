@@ -16,7 +16,7 @@ This project matches certificate image/PDF files with entries from a CSV file by
 Install dependencies:
 
 ```bash
-pip install pandas tabulate termcolor passporteye pytesseract pycountry pdf2image pillow
+pip install pandas tabulate termcolor passporteye pytesseract pycountry pdf2image pillow cv2
 
 Install the below in local
 
