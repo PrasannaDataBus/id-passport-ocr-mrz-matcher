@@ -99,7 +99,7 @@ import pycountry
 from passporteye import read_mrz
 import pytesseract
 from pdf2image import convert_from_path
-from PIL import Image
+from PIL import Image, UnidentifiedImageError, ImageFile
 from difflib import get_close_matches
 import cv2
 
@@ -217,14 +217,44 @@ def to_country_name(iso3):
     return ISO3_TO_NAME.get(iso3)
 
 
+import imghdr
+
+# Safe Image Loader
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+Image.MAX_IMAGE_PIXELS = None  # disable decompression bomb warning safely
+
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass  # optional
+
+
 def img_from_file(file_path):
-    """Load first page image for PDFs; PIL Image for images."""
-    if file_path.lower().endswith(".pdf"):
-        pages = convert_from_path(file_path, dpi=350, poppler_path=POPPLER_PATH)
-        if not pages: return None
-        return pages[0]
-    else:
-        return Image.open(file_path)
+    """Return PIL image from image or first page of PDF, with real format detection."""
+    try:
+        # Handle PDF
+        if file_path.lower().endswith('.pdf'):
+            pages = convert_from_path(file_path, dpi=250, poppler_path=POPPLER_PATH)
+            return pages[0] if pages else None
+
+        # Verify real image type
+        real_type = imghdr.what(file_path)
+        if real_type is None:
+            print("Unsupported or mislabeled file:", file_path)
+            return None
+
+        # Open normally
+        with Image.open(file_path) as im:
+            im = im.convert("RGB")
+        return im
+
+    except UnidentifiedImageError:
+        print("Unidentified/corrupted image:", file_path)
+        return None
+    except Exception as e:
+        print("Image load failed:", file_path, "→", e)
+        return None
 
 
 def preprocess_for_ocr(pil_img):
