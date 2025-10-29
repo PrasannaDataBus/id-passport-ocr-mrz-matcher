@@ -1,19 +1,19 @@
 # id-passport-ocr-mrz-matcher
 
-# Certificate Matcher
-
-This project matches certificate image/PDF files with entries from a CSV file by extracting the numeric code embedded in filenames. It also attempts to automatically detect **nationality** from the certificate using **MRZ (passport)** data or **OCR text scanning**.
+A Python tool that matches certificate image/PDF files with records from a CSV file and automatically extracts **nationality information** using **OCR**, **MRZ**, and **ISO3 country code mapping**.
 
 ## Features
-- Extracts certificate ID numbers from filenames
-- Matches certificate images to CSV records
-- Uses MRZ (machine-readable passport zone) when available
-- Falls back to OCR text recognition (English + Arabic)
-- Attempts to detect nationality using standard ISO country codes
-- Outputs a clean merged dataset with nationality information
+- Matches certificates with CSV entries using numeric codes in filenames  
+- Extracts nationality from certificates using:
+  - MRZ parsing (passport-style documents)
+  - OCR text recognition (English + Arabic)
+  - Keyword-based detection
+  - ISO3, alias, and Arabic country name mapping
+- Generates confidence scores and identifies data source  
+- Outputs both full and high-confidence result files  
 
-## Requirements
-Install dependencies:
+## Setup
+### 1. Install Dependencies
 
 ```bash
 pip install pandas tabulate termcolor passporteye pytesseract pycountry pdf2image pillow opencv-python
