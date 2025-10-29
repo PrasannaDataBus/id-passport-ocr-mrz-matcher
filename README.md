@@ -17,3 +17,8 @@ Install dependencies:
 
 ```bash
 pip install pandas tabulate termcolor passporteye pytesseract pycountry pdf2image pillow
+
+Install the below in local
+
+tesseract.exe
+poppler-25.07.0
