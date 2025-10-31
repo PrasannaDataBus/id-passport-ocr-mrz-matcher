@@ -1,3 +1,43 @@
+"""
+======================
+NATIONALITY EXTRACTION PIPELINE (OCR + MRZ)
+======================
+
+Purpose:
+--------
+To extract the nationality of a person from scanned certificates, passports, or visas.
+This script combines OCR (Tesseract), MRZ reading (passporteye), and robust
+text analysis to identify the most likely country of nationality — even
+when the text is partially distorted or multilingual (English + Arabic).
+
+Core Steps:
+------------
+1. Try MRZ (Machine Readable Zone) extraction if available.
+2. OCR the document image or PDF.
+3. Detect nationality based on:
+   - Keyword lines (“NATIONALITY: IND”)
+   - 3-letter ISO3 codes
+   - Full country names or adjectives (“INDIA”, “EGYPTIAN”)
+   - Arabic text (e.g., “الهند”, “الإمارات”)
+   - Fuzzy matching for misspelled 3-letter codes
+
+Output:
+--------
+The pipeline returns:
+- nationality_raw         → The raw extracted string (e.g., “IND”, “INDIA”, “الهند”)
+- nationality_iso3        → Clean ISO-3 country code (e.g., “IND”)
+- nationality_country     → Full country name (e.g., “India”)
+- nationality_confidence  → Confidence score (0–1)
+- nationality_source      → Which logic path found it (“MRZ”, “FULL_WORD_SCAN”, etc.)
+
+Dependencies:
+-------------
+pip install passporteye pycountry pytesseract pdf2image pillow opencv-python
+and install:
+- Tesseract OCR
+- Poppler (for PDF rendering)
+"""
+
 import os
 import pandas as pd
 import re
@@ -6,115 +46,83 @@ from termcolor import colored
 import openpyxl
 from tabulate import tabulate as tab
 
-# STEP 1: LOAD & CLEAN CSV
-
-# Path to the CSV file that contains certificate info
-csv_path = r"C:\Users\xxx\yyy\ID_Proof.csv"
+# Load the CSV
+csv_path = r"C:\xxx\yyy\aaa\Certificate.csv"
 df = pd.read_csv(csv_path)
 
 
-# Function to extract the numeric certificate ID from a filename-like string
-# Example:
-#    "CERT-IMG-00234.jpg" → "00234"
-#    "abc-123-456" → "456"
+# Function to extract only the first number sequence after "-"
 def extract_number(value):
     if pd.isna(value):
         return None
-    
-    # Remove file extension if present (e.g., .jpg, .png)
-    value = os.path.splitext(str(value))[0]
-
-    # Find all groups of digits within the string
+    value = os.path.splitext(str(value))[0]  # remove extension
     nums = re.findall(r'\d+', value)
-
-    # If multiple number sequences exist, the last one is assumed to be the ID
     if len(nums) >= 2:
-        return nums[-1] # take the last group
+        return nums[-1]   # take the last group
     elif len(nums) == 1:
-        return nums[0] # only one number group
-
+        return nums[0]    # only one number group
     return None
 
 
-# Create a new column in CSV dataframe with cleaned extracted certificate number
+# Apply cleaning logic to CSV column
 df['cleaned_img_certificate'] = df['img_certificate'].apply(extract_number)
-
 print(colored("CSV cleaned preview:", 'red'))
 df.info()
 print(tab(df.head(5), headers='keys', tablefmt='psql', showindex=False))
 
-# STEP 2: READ CERTIFICATE FOLDER
+# Process Certificate Folder
 
-folder_path = r"C:\Users\xxx\yyy\cert"
+folder_path = r"C:\xxx\yyy\aaa\certificate"
 
 file_data = []
-
-# Loop through every file in the certificates folder
 for file in os.listdir(folder_path):
-    # Only consider image and PDF files
     if file.lower().endswith(('.jpg', '.jpeg', '.png', '.pdf')):
         full_path = os.path.join(folder_path, file)
-
-        # Filename without extension
-        raw_name = os.path.splitext(file)[0]
-
-        # Extract the numeric certificate code from the filename
+        raw_name = os.path.splitext(file)[0]   # filename without extension
         cleaned = extract_number(raw_name)
-
-        # Store original + cleaned values
         file_data.append([raw_name, file, cleaned])
 
-# Convert folder scan results into dataframe
-df_files = pd.DataFrame(file_data, columns=[
-    'ftp_img_certificate',         # filename base
-    'ftp_real_img_certificate',    # real filename including extension
-    'ftp_cleaned_img_certificate'  # extracted numeric ID
-])
-
+df_files = pd.DataFrame(file_data, columns=['ftp_img_certificate', 'ftp_real_img_certificate', 'ftp_cleaned_img_certificate'])
 print(colored("\nFolder file table preview:", 'red'))
 df_files.info()
 print(tab(df_files.head(5), headers='keys', tablefmt='psql', showindex=False))
 
-# STEP 3: MATCH CSV ENTRIES WITH FOLDER FILES
+# Compare and Keep Matches
+merged_df = pd.merge(df_files, df, left_on='ftp_cleaned_img_certificate', right_on='cleaned_img_certificate', how='inner')
 
-# Merge on the cleaned numeric certificate code column
-merged_df = pd.merge(
-    df_files,
-    df,
-    left_on='ftp_cleaned_img_certificate',
-    right_on='cleaned_img_certificate',
-    how='inner'
-)
-
-# Avoid duplicate matches (if multiple images mapped to the same ID)
+# Keep only one match per certificate ID
 merged_unique = merged_df.drop_duplicates(subset="cleaned_img_certificate", keep="first")
 
 print(colored("\nMerged result preview:", 'red'))
 merged_unique.info()
 print(tab(merged_unique.head(25), headers='keys', tablefmt='psql', showindex=False))
 
-# STEP 4: EXTRACT NATIONALITY FROM CERT FILE
-
 import pycountry
 from passporteye import read_mrz
 import pytesseract
+
 from pdf2image import convert_from_path
 from PIL import Image, UnidentifiedImageError, ImageFile
 from difflib import get_close_matches
+
 import cv2
 
-# Windows: Path to tesseract.exe
+######################################### SYSTEM PATH CONFIGURATION ####################################################
+
+# Tesseract OCR executable path (change if installed elsewhere)
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-# Windows: Poppler bin folder path
-POPPLER_PATH = r"C:\zzz\xxxx\yyyy\poppler-25.07.0\Library\bin"
+# Poppler library path for PDF conversion
+POPPLER_PATH = r"C:\xxxx\yyyy\dddd\poppler-25.07.0\Library\bin"
+
+########################################### COUNTRY & LANGUAGE MAPPINGS ################################################
 
 # ISO & dictionaries
 ISO3_TO_NAME = {c.alpha_3: c.name for c in pycountry.countries}
 ISO3_SET = set(ISO3_TO_NAME.keys())
-BLOCKLIST_ISO3 = {"ATA"}  # Antarctica
+BLOCKLIST_ISO3 = {"ATA"}  # Exclude invalid or irrelevant codes (like Antarctica)
 
-# Common aliases / OCR confusions → ISO3
+# Common OCR confusions or shorthand → corrected ISO3 codes
 ALIAS_TO_ISO3 = {
     "LEB":"LBN",
     "IRA":"IRN",
@@ -179,7 +187,7 @@ ALIAS_TO_ISO3 = {
     "EMI":"ARE"
 }
 
-# Arabic country name (common OCR) → ISO3 (expand as you encounter more)
+# Arabic text → ISO3 codes (for bilingual documents)
 ARABIC_NAME_TO_ISO3 = {
     "الكويت":"KWT",
     "الإمارات":"ARE",
@@ -210,12 +218,9 @@ ARABIC_NAME_TO_ISO3 = {
     "جنوب افريقيا":"ZAF"
 }
 
+############################################# IMAGE HANDLING & OCR PREP ################################################
 
-# helpers
-def to_country_name(iso3):
-    if not iso3 or iso3 in BLOCKLIST_ISO3: return None
-    return ISO3_TO_NAME.get(iso3)
-
+# Prevent Pillow warnings on large files or truncated images
 
 import imghdr
 
@@ -230,8 +235,18 @@ except ImportError:
     pass  # optional
 
 
+# helpers
+
+
+def to_country_name(iso3):
+    """Return full country name from ISO3 code (e.g. 'IND' → 'India')."""
+    if not iso3 or iso3 in BLOCKLIST_ISO3: return None
+    return ISO3_TO_NAME.get(iso3)
+
+
 def img_from_file(file_path):
-    """Return PIL image from image or first page of PDF, with real format detection."""
+    """Return PIL image from image or first page of PDF, with real format detection.
+    Safely open an image or first page of a PDF.Converts all images to RGB to ensure consistent OCR input"""
     try:
         # Handle PDF
         if file_path.lower().endswith('.pdf'):
@@ -258,7 +273,12 @@ def img_from_file(file_path):
 
 
 def preprocess_for_ocr(pil_img):
-    """PIL → OpenCV preprocess → PIL back (improves OCR)."""
+    """PIL → OpenCV preprocess → PIL back (improves OCR).
+        Preprocess an image for better OCR accuracy.
+        - Convert to grayscale
+        - Enhance contrast (CLAHE)
+        - Apply Otsu’s thresholding
+        """
     try:
         cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     except Exception:
@@ -275,11 +295,14 @@ def preprocess_for_ocr(pil_img):
 
 
 def extract_text(pil_img):
+    """Run OCR using Tesseract in English + Arabic."""
     return pytesseract.image_to_string(pil_img, lang="eng+ara")
 
 
 def find_after_keyword(text_up, keywords):
-    """Return token(s) that follow a keyword on the same line."""
+    """Return token(s) that follow a keyword on the same line.
+    Find words appearing immediately after known keywords like 'NATIONALITY' or 'الجنسية'.
+    Useful when nationality appears on same line as the label."""
     lines = [ln.strip() for ln in text_up.splitlines() if ln.strip()]
     for ln in lines:
         for kw in keywords:
@@ -308,6 +331,7 @@ def strict_iso3_in_text(text_up):
 
 
 def name_match_in_text(text_up):
+    """Match full official country names (EN/AR) in OCR text."""
     # English names
     for iso, name in ISO3_TO_NAME.items():
         if name.upper() in text_up and iso not in BLOCKLIST_ISO3:
@@ -319,18 +343,115 @@ def name_match_in_text(text_up):
     return None
 
 
+def extract_country_word(text_up):
+    """
+    Robustly detect full country names or adjectives in OCR text (e.g. 'INDIA', 'EGYPTIAN', 'UNITED ARAB EMIRATES').
+    Works in English and Arabic.
+    Detect full country words, adjectives, or Arabic equivalents in text.
+    Corrects OCR errors (e.g. INDlA → INDIA) and handles demonyms (“EGYPTIAN”, “FILIPINO”).
+    """
+    text_up = re.sub(r"[^A-Z\s]", " ", text_up.upper())
+
+    # Common variants / adjectives / frequent OCR typos
+    variants = {
+        "INDIA": "IND", "INDlA": "IND", "INDIAN": "IND",
+        "UNITED ARAB EMIRATES": "ARE", "EMIRATES": "ARE", "EMIRATI": "ARE", "UAE": "ARE",
+        "PAKISTAN": "PAK", "PAKISTANI": "PAK", "PAKlSTAN": "PAK",
+        "EGYPT": "EGY", "EGYPTIAN": "EGY",
+        "LEBANON": "LBN", "LEBANESE": "LBN",
+        "SYRIA": "SYR", "SYRIAN": "SYR",
+        "JORDAN": "JOR", "JORDANIAN": "JOR",
+        "IRAQ": "IRQ", "IRAQI": "IRQ",
+        "IRAN": "IRN", "IRANIAN": "IRN",
+        "OMAN": "OMN", "OMANI": "OMN",
+        "QATAR": "QAT", "QATARI": "QAT",
+        "BAHRAIN": "BHR", "BAHRAINI": "BHR",
+        "KUWAIT": "KWT", "KUWAITI": "KWT", "KWI": "KWT",
+        "PHILIPPINES": "PHL", "FILIPINO": "PHL",
+        "BANGLADESH": "BGD", "BANGLADESHI": "BGD",
+        "NEPAL": "NPL", "NEPALI": "NPL",
+        "SRI LANKA": "LKA", "SRILANKA": "LKA", "SRILANKAN": "LKA",
+        "CHINA": "CHN", "CHINESE": "CHN",
+        "NIGERIA": "NGA", "NIGERIAN": "NGA",
+        "KENYA": "KEN", "KENYAN": "KEN",
+        "ETHIOPIA": "ETH", "ETHIOPIAN": "ETH",
+        "SOUTH AFRICA": "ZAF", "SOUTH AFRICAN": "ZAF",
+        "TURKEY": "TUR", "TURKISH": "TUR",
+        "SAUDI ARABIA": "SAU", "SAUDI": "SAU", "KSA": "SAU",
+        "PALESTINE": "PSE", "PALESTINIAN": "PSE",
+        "LIBYA": "LBY", "LIBYAN": "LBY",
+        "MOROCCO": "MAR", "MOROCCAN": "MAR",
+        "TUNISIA": "TUN", "TUNISIAN": "TUN",
+        "ALGERIA": "DZA", "ALGERIAN": "DZA",
+        "FRANCE": "FRA", "FRENCH": "FRA",
+        "GERMANY": "DEU", "GERMAN": "DEU",
+        "UNITED KINGDOM": "GBR", "ENGLAND": "GBR", "BRITISH": "GBR",
+        "USA": "USA", "UNITED STATES": "USA", "AMERICAN": "USA",
+        "CANADA": "CAN", "CANADIAN": "CAN",
+        "ITALY": "ITA", "ITALIAN": "ITA",
+        "SPAIN": "ESP", "SPANISH": "ESP",
+        "PORTUGAL": "PRT", "PORTUGUESE": "PRT",
+        "RUSSIA": "RUS", "RUSSIAN": "RUS",
+        "UKRAINE": "UKR", "UKRAINIAN": "UKR",
+        "POLAND": "POL", "POLISH": "POL",
+        "SWITZERLAND": "CHE", "SWISS": "CHE",
+        "NETHERLANDS": "NLD", "DUTCH": "NLD", "HOLLAND": "NLD",
+        "BELGIUM": "BEL", "BELGIAN": "BEL",
+        "SINGAPORE": "SGP", "SINGAPOREAN": "SGP",
+        "MALAYSIA": "MYS", "MALAYSIAN": "MYS",
+        "THAILAND": "THA", "THAI": "THA",
+        "INDONESIA": "IDN", "INDONESIAN": "IDN",
+        "JAPAN": "JPN", "JAPANESE": "JPN",
+        "KOREA": "KOR", "KOREAN": "KOR",
+        "AFGHANISTAN": "AFG", "AFGHAN": "AFG"
+    }
+
+    # Arabic variants (common in Gulf IDs)
+    arabic_variants = {
+        "الهند": "IND", "الإمارات": "ARE", "الامارات": "ARE", "السعودية": "SAU",
+        "قطر": "QAT", "البحرين": "BHR", "عمان": "OMN", "مصر": "EGY",
+        "الأردن": "JOR", "الاردن": "JOR", "سوريا": "SYR", "لبنان": "LBN",
+        "العراق": "IRQ", "إيران": "IRN", "ايران": "IRN", "فلسطين": "PSE",
+        "الفلبين": "PHL", "باكستان": "PAK", "نيبال": "NPL", "بنغلاديش": "BGD",
+        "سريلانكا": "LKA", "الصين": "CHN", "نيجيريا": "NGA", "اثيوبيا": "ETH",
+        "جنوب افريقيا": "ZAF"
+    }
+
+    # Combine all
+    combined = {**variants, **arabic_variants}
+
+    for key, iso in combined.items():
+        if key in text_up:
+            return iso
+
+    # fallback: full official name
+    for iso, name in ISO3_TO_NAME.items():
+        if name.upper() in text_up:
+            return iso
+
+    return None
+
+
 # optional, only if needed later
 def fuzzy_iso3_safe(code):
+    """Fuzzy match slightly incorrect 3-letter codes (e.g. INO → IND)."""
     if not code or not re.fullmatch(r"[A-Z]{3}", code): return None
     hit = get_close_matches(code, list(ISO3_SET), n=1, cutoff=0.94)
     if hit and hit[0] not in BLOCKLIST_ISO3:
         return hit[0]
     return None
 
+
+############################################ MAIN NATIONALITY EXTRACTOR ###############################################
+
 # main extractor returning rich info
 
 
 def extract_nationality_best(file_path):
+    """
+        Unified nationality extraction from image or PDF.
+        Combines MRZ reading and OCR-based multi-step analysis.
+        """
     # 1) MRZ
     try:
         mrz = read_mrz(file_path)
@@ -405,7 +526,18 @@ def extract_nationality_best(file_path):
                     "nationality_confidence": 0.8,
                     "nationality_source": "NAME_SCAN"}
 
-        # 2d) (Optional) ultra-conservative fuzzy on 3-letter token
+        # 2d) Full word scan (e.g. INDIA, PAKISTAN, EGYPT, etc.)
+        iso = extract_country_word(text_up)
+        if iso:
+            return {
+                "nationality_raw": ISO3_TO_NAME[iso],
+                "nationality_iso3": iso,
+                "nationality_country": to_country_name(iso),
+                "nationality_confidence": 0.9,
+                "nationality_source": "FULL_WORD_SCAN"
+            }
+
+        # 2e) ultra-conservative fuzzy on 3-letter token
         m = re.search(r"\b[A-Z]{3}\b", text_up)
         if m:
             guess = fuzzy_iso3_safe(m.group(0))
@@ -458,10 +590,8 @@ good = merged_unique[
     (merged_unique['nationality_source'] == "MRZ")
 ]
 
-# STEP 5: SAVE RESULTS TO CSV
 # Save both full and filtered outputs
+merged_unique.to_csv(r"C:\xxxx\yyyy\dddd\matched_certificates_with_nationality_raw.csv", index=False)
+good.to_csv(r"C:\xxxx\yyyy\dddd\matched_certificates_with_nationality_confident.csv", index=False)
 
-merged_unique.to_csv(r"C:\zzz\xxx\yyy\matched_certificates_with_nationality_raw.csv", index=False)
-good.to_csv(r"C:\zzz\xxx\yyy\matched_certificates_with_nationality_confident.csv", index=False)
-
-print("\nDone! Matched file saved to:")
+print("\n Done! Matched file saved")
