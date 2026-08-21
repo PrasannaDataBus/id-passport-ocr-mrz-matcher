@@ -40,6 +40,7 @@ and install:
 
 import os
 import pandas as pd
+import numpy as np
 import re
 
 from termcolor import colored
@@ -47,7 +48,7 @@ import openpyxl
 from tabulate import tabulate as tab
 
 # Load the CSV
-csv_path = r"C:\xxx\yyy\aaa\Certificate.csv"
+csv_path = os.environ.get("CERT_CSV_PATH", r"C:\xxx\yyy\aaa\Certificate.csv")
 df = pd.read_csv(csv_path)
 
 
@@ -72,7 +73,7 @@ print(tab(df.head(5), headers='keys', tablefmt='psql', showindex=False))
 
 # Process Certificate Folder
 
-folder_path = r"C:\xxx\yyy\aaa\certificate"
+folder_path = os.environ.get("CERT_FOLDER_PATH", r"C:\xxx\yyy\aaa\certificate")
 
 file_data = []
 for file in os.listdir(folder_path):
@@ -91,7 +92,7 @@ print(tab(df_files.head(5), headers='keys', tablefmt='psql', showindex=False))
 merged_df = pd.merge(df_files, df, left_on='ftp_cleaned_img_certificate', right_on='cleaned_img_certificate', how='inner')
 
 # Keep only one match per certificate ID
-merged_unique = merged_df.drop_duplicates(subset="cleaned_img_certificate", keep="first")
+merged_unique = merged_df.drop_duplicates(subset="cleaned_img_certificate", keep="first").copy()
 
 print(colored("\nMerged result preview:", 'red'))
 merged_unique.info()
@@ -110,10 +111,10 @@ import cv2
 ######################################### SYSTEM PATH CONFIGURATION ####################################################
 
 # Tesseract OCR executable path (change if installed elsewhere)
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = os.environ.get("TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 
 # Poppler library path for PDF conversion
-POPPLER_PATH = r"C:\xxxx\yyyy\dddd\poppler-25.07.0\Library\bin"
+POPPLER_PATH = os.environ.get("POPPLER_PATH", r"C:\xxxx\yyyy\dddd\poppler-25.07.0\Library\bin")
 
 ########################################### COUNTRY & LANGUAGE MAPPINGS ################################################
 
