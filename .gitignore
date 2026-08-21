@@ -1,0 +1,13 @@
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Data and Images (prevent accidental uploads of PII)
+*.csv
+certificate/
